@@ -133,8 +133,11 @@ type StatsValues = Record<string, number | string>;
 /** All documented placeholders, computed from the current tracking state. */
 function buildStatsValues(): StatsValues {
   const latestDuration = runStartedAt !== 0 ? Date.now() - runStartedAt : lastDurationMs;
+  // Session total ticks live: completed runs plus the in-flight run, so it
+  // moves together with the current run and agent_end causes no jump.
+  const liveTotalMs = totalDurationMs + (runStartedAt !== 0 ? Date.now() - runStartedAt : 0);
   const runSecs = Math.round((latestDuration ?? 0) / 1000);
-  const totalSecs = Math.round(totalDurationMs / 1000);
+  const totalSecs = Math.round(liveTotalMs / 1000);
   const parts = (secs: number) => ({
     hours: Math.floor(secs / 3600),
     minutes: Math.floor((secs % 3600) / 60),
@@ -148,7 +151,7 @@ function buildStatsValues(): StatsValues {
     runTokens: runStartedAt !== 0 ? runTokens + messageTokens : lastRunTokens,
     totalTokens: totalOutputTokens,
     runDuration: latestDuration !== undefined ? formatDuration(latestDuration) : "0s",
-    totalDuration: totalDurationMs > 0 ? formatDuration(totalDurationMs) : "0s",
+    totalDuration: liveTotalMs > 0 ? formatDuration(liveTotalMs) : "0s",
     runHours: run.hours,
     runMinutes: run.minutes,
     runSeconds: run.seconds,
