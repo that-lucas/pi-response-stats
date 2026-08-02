@@ -6,7 +6,7 @@
  * info. "current" and "latest run" span the whole agent run
  * (`agent_start` → `agent_end`): every LLM response, thinking block, and
  * tool call between the user pressing Enter and the agent delivering the
- * final answer, live while running. Always visible; `–/–` placeholders
+ * final answer, live while running. Always visible; `–/– TPS • –/–`
  * before the first run completes:
  *
  *   /tmp

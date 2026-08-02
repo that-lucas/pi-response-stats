@@ -1,6 +1,6 @@
 {
   "name": "pi-response-stats",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pi extension showing tokens-per-second and response time per agent run, plus session averages, in the footer",
   "author": "that-lucas",
   "license": "MIT",

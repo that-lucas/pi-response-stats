@@ -13,16 +13,16 @@ The footer shows the current run's TPS and duration alongside session averages, 
 - **Current run** — TPS and duration of the most recent agent run, live while running (every thinking block and tool call counts)
 - **Session totals** — average TPS and total time across all runs in the current session
 
-Both values reset when you start a new session. Before the first run completes, the line shows `–/– –/–`.
+All values reset when you start a new session. Before the first run completes, the line shows `–/– TPS • –/–`.
 
 ## Install
 
 ```bash
-pi install git:github.com/that-lucas/pi-response-stats
+pi install npm:pi-response-stats
 ```
 
 Or copy `response-stats.ts` to `~/.pi/agent/extensions/` and run `/reload`.
 
 ## Behavior
 
-Works automatically — no commands or shortcuts. The stats line appears as soon as the first run completes.
+Works automatically — no commands or shortcuts. The line is always visible; values fill in as runs complete.
