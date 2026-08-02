@@ -1,21 +1,22 @@
 /**
  * Response stats footer extension.
  *
- * Shows `⚡{current}/{avg} ⏱ {latest run time}/{session total}` on its
- * own footer line, below the stats line that holds the context window usage
- * info. "current" and "latest run" span the whole agent run
- * (`agent_start` → `agent_end`): every LLM response, thinking block, and
- * tool call between the user pressing Enter and the agent delivering the
- * final answer, live while running. Always visible; `⚡–/– ⏱ –/–`
+ * Shows a configurable stats line on its own footer line, below the stats
+ * line that holds the context window usage info. The default format is
+ * `⚡{runTps}/{avgTps} ⏱{runDuration}/{totalDuration}`; override it with a
+ * `format` string in `~/.pi/agent/response-stats.json` (full placeholder
+ * reference in the README "Format" section). Runs span the whole agent
+ * run (`agent_start` → `agent_end`): every LLM response, thinking block,
+ * and tool call between the user pressing Enter and the agent delivering
+ * the final answer, live while running. Always visible; `⚡0/0 ⏱0s/0s`
  * before the first run completes:
  *
  *   /tmp
  *   ↑2.1k ↓3.4k R45.2k W12.1k CH88.1% $0.123 42.5%/200k   model
- *   ⚡123/99 ⏱ 32s/1min 54s
+ *   ⚡123/99 ⏱ 32s/1m 54s
  *
- * - current: tokens/sec of the last completed agent run (live while running,
- *   using output tokens streamed so far).
- * - avg: session average tokens/sec over all completed agent runs
+ * - runTps: tokens/sec of the current agent run (live while running).
+ * - avgTps: session average tokens/sec over all completed agent runs
  *   (output tokens / wall time, thinking and tool calls included). Resets
  *   per session.
  *
@@ -29,7 +30,9 @@
 import type { ExtensionAPI, ExtensionContext, ReadonlyFooterDataProvider, Theme } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { truncateToWidth, visibleWidth, type TUI } from "@earendil-works/pi-tui";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 // ---------------------------------------------------------------------------
 // TPS tracking state. Module-level on purpose: extension instances are
@@ -42,6 +45,7 @@ let runTokens = 0; // output tokens from completed assistant messages in the run
 let messageTokens = 0; // live output tokens of the in-flight assistant message
 let lastTps: number | undefined; // TPS of the last completed agent run
 let lastDurationMs: number | undefined; // wall time of the last completed agent run
+let lastRunTokens = 0; // output tokens of the last completed agent run
 let totalOutputTokens = 0; // session totals over completed agent runs
 let totalDurationMs = 0;
 
@@ -60,22 +64,126 @@ function sessionAvgTps(): number | undefined {
   return totalOutputTokens / (totalDurationMs / 1000);
 }
 
-function formatTps(n: number): string {
-  return Math.round(n).toString();
-}
-
-/** Format a duration as 32s, 1min 54s, or 2h 5min. */
+/** Format a duration as 32s, 1m 54s, or 2h 5m. */
 function formatDuration(ms: number): string {
   const totalSec = Math.round(ms / 1000);
   const h = Math.floor(totalSec / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
   const s = totalSec % 60;
-  if (h > 0) return `${h}h ${m}min`;
-  if (m > 0) return `${m}min ${s}s`;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
 }
 
+// ---------------------------------------------------------------------------
+// Configurable stats line format. The `format` setting lives in
+// ~/.pi/agent/response-stats.json (see README "Format" section for the full
+// placeholder reference).
+// ---------------------------------------------------------------------------
+
+/** .NET-style number spec: "0", "0.0", "0.##", "0.0#" -> Intl options. */
+function formatNumber(value: number, spec: string | undefined): string {
+  if (!spec || !/^0(\.(0+|#+|0*#+))?$/.test(spec)) {
+    return String(Math.round(value));
+  }
+  const frac = spec.split(".")[1] ?? "";
+  const minDecimals = (frac.match(/0/g) ?? []).length;
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: minDecimals,
+    maximumFractionDigits: frac.length,
+    useGrouping: false,
+  }).format(value);
+}
+
+/** Unit for each raw duration component, used by the IfAny placeholders. */
+const UNIT_BY_COMPONENT: Record<string, string> = {
+  runHours: "h",
+  runMinutes: "m",
+  runSeconds: "s",
+  totalHours: "h",
+  totalMinutes: "m",
+  totalSeconds: "s",
+};
+
+const IF_ANY_SUFFIX = "IfAny";
+
+const DEFAULT_FORMAT = "\u26A1\uFE0E{runTps}/{avgTps} \u23F1\uFE0E\u2009{runDuration}/{totalDuration}";
+
+let statsFormat = DEFAULT_FORMAT;
+
+/** Load the optional ~/.pi/agent/response-stats.json config. */
+function loadStatsConfig(): void {
+  try {
+    const agentDir = process.env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), ".pi", "agent");
+    const config = JSON.parse(readFileSync(join(agentDir, "response-stats.json"), "utf8")) as {
+      format?: unknown;
+    };
+    if (typeof config.format === "string" && config.format.length > 0) {
+      statsFormat = config.format;
+    }
+  } catch {
+    // missing or unreadable config: keep the default format
+  }
+}
+
+type StatsValues = Record<string, number | string>;
+
+/** All documented placeholders, computed from the current tracking state. */
+function buildStatsValues(): StatsValues {
+  const latestDuration = runStartedAt !== 0 ? Date.now() - runStartedAt : lastDurationMs;
+  const runSecs = Math.round((latestDuration ?? 0) / 1000);
+  const totalSecs = Math.round(totalDurationMs / 1000);
+  const parts = (secs: number) => ({
+    hours: Math.floor(secs / 3600),
+    minutes: Math.floor((secs % 3600) / 60),
+    seconds: secs % 60,
+  });
+  const run = parts(runSecs);
+  const total = parts(totalSecs);
+  return {
+    runTps: liveTps() ?? lastTps ?? 0,
+    avgTps: sessionAvgTps() ?? 0,
+    runTokens: runStartedAt !== 0 ? runTokens + messageTokens : lastRunTokens,
+    totalTokens: totalOutputTokens,
+    runDuration: latestDuration !== undefined ? formatDuration(latestDuration) : "0s",
+    totalDuration: totalDurationMs > 0 ? formatDuration(totalDurationMs) : "0s",
+    runHours: run.hours,
+    runMinutes: run.minutes,
+    runSeconds: run.seconds,
+    totalHours: total.hours,
+    totalMinutes: total.minutes,
+    totalSeconds: total.seconds,
+  };
+}
+
+/**
+ * Substitute {name} and {name:spec} placeholders. IfAny placeholders expand
+ * to `value + unit` when non-zero and to nothing when zero; after
+ * substitution, whitespace runs of 2+ collapse to one space and the result
+ * is trimmed. Unknown placeholders stay literal so typos are visible.
+ */
+function applyStatsFormat(format: string, values: StatsValues): string {
+  const rendered = format.replace(/\{(\w+)(?::([^}]+))?\}/g, (match, rawName: string, spec?: string) => {
+    let name = rawName;
+    let unit: string | undefined;
+    if (name.endsWith(IF_ANY_SUFFIX)) {
+      const base = name.slice(0, -IF_ANY_SUFFIX.length);
+      unit = UNIT_BY_COMPONENT[base];
+      if (unit === undefined) return match;
+      name = base;
+    }
+    const value = values[name];
+    if (value === undefined) return match;
+    if (typeof value === "string") return value;
+    if (unit !== undefined && value === 0) return "";
+    return formatNumber(value, spec) + (unit ?? "");
+  });
+  return rendered.replace(/\s{2,}/g, " ").trim();
+}
+
 export default function (pi: ExtensionAPI) {
+  loadStatsConfig();
+
   // --- measure each agent run: agent_start -> agent_end ----------------------
   pi.on("agent_start", () => {
     runStartedAt = Date.now();
@@ -106,6 +214,7 @@ export default function (pi: ExtensionAPI) {
     if (tokens <= 0 || elapsedMs <= 0) return;
     lastTps = tokens / (elapsedMs / 1000);
     lastDurationMs = elapsedMs;
+    lastRunTokens = tokens;
     totalOutputTokens += tokens;
     totalDurationMs += elapsedMs;
     requestRender?.();
@@ -272,14 +381,8 @@ function renderFooter(
     dimStatsLeft + dimRemainder,
   ];
 
-  // --- Stats line: {current}/{avg} TPS • {latest}/{total} time, own line -------
-  const latestDuration = runStartedAt !== 0 ? Date.now() - runStartedAt : lastDurationMs;
-  const durationStr = `${latestDuration !== undefined ? formatDuration(latestDuration) : "–"}/${totalDurationMs > 0 ? formatDuration(totalDurationMs) : "–"}`;
-  const current = liveTps() ?? lastTps;
-  const avg = sessionAvgTps();
-  const currentStr = current !== undefined ? formatTps(current) : "–";
-  const avgStr = avg !== undefined ? formatTps(avg) : "–";
-  lines.push(truncateToWidth(theme.fg("dim", `⚡︎${currentStr}/${avgStr} ⏱︎\u2009${durationStr}`), width, theme.fg("dim", "...")));
+  // --- Stats line (configurable format), on its own line ----------------------
+  lines.push(truncateToWidth(theme.fg("dim", applyStatsFormat(statsFormat, buildStatsValues())), width, theme.fg("dim", "...")));
 
   const extensionStatuses = footerData.getExtensionStatuses();
   if (extensionStatuses.size > 0) {
