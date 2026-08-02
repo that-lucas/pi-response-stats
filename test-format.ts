@@ -108,7 +108,7 @@ check(applyStatsFormat("{totalMinutesIfAny}", valuesLong), "1m", "{totalMinutesI
 check(applyStatsFormat("{totalSecondsIfAny}", valuesLong), "54s", "{totalSecondsIfAny}");
 
 // --- examples from the docs ---------------------------------------------------
-const DEF = "\u26A1\uFE0E{runTps}/{avgTps} \u23F1\uFE0E\u2009{runDuration}/{totalDuration}";
+const DEF = "\n\u26A1\uFE0E{runTps}/{avgTps} \u23F1\uFE0E\u2009{runDuration}/{totalDuration}";
 check(applyStatsFormat(DEF, values), "\u26A1\uFE0E123/99 \u23F1\uFE0E\u200932s/1m 54s", "default format");
 check(applyStatsFormat(DEF, preRun), "\u26A1\uFE0E0/0 \u23F1\uFE0E\u20090s/0s", "default pre-run");
 check(applyStatsFormat("\u23F1\uFE0E{runHoursIfAny} {runMinutesIfAny} {runSecondsIfAny}", values), "\u23F1\uFE0E 32s", "IfAny collapses zeros");
@@ -122,6 +122,25 @@ check(applyStatsFormat("{runTps:0.0}/{avgTps}", values), "123.0/99", "spec on ru
 check(applyStatsFormat("{runTokens} tok", values), "421 tok", "tokens literal suffix");
 check(applyStatsFormat("x {bogus} y", values), "x {bogus} y", "unknown stays literal");
 check(applyStatsFormat("  {runTps}   {avgTps}  ", values), "123 99", "whitespace collapse+trim");
+
+// --- newline placement decision -------------------------------------------------
+function splitNewlineDecision(format: string): { newLine: boolean; body: string } {
+  if (format.startsWith("\n")) return { newLine: true, body: format.slice(1) };
+  return { newLine: false, body: format };
+}
+function renderStatsText(format: string, vals: StatsValues): { newLine: boolean; text: string } {
+  const { newLine, body } = splitNewlineDecision(format);
+  return { newLine, text: applyStatsFormat(body, vals).replace(/\n/g, " ") };
+}
+
+const nl = renderStatsText("\n⚡{runTps}/{avgTps}", values);
+check(JSON.stringify(nl), JSON.stringify({ newLine: true, text: "⚡123/99" }), "leading \\n -> own line");
+const inl = renderStatsText("⚡{runTps}/{avgTps}", values);
+check(JSON.stringify(inl), JSON.stringify({ newLine: false, text: "⚡123/99" }), "no prefix -> inline");
+const def = renderStatsText(DEF, values);
+check(JSON.stringify(def), JSON.stringify({ newLine: true, text: "\u26A1\uFE0E123/99 \u23F1\uFE0E\u200932s/1m 54s" }), "default format -> own line");
+const stray = renderStatsText("a\nb {runTps}", values);
+check(JSON.stringify(stray), JSON.stringify({ newLine: false, text: "a b 123" }), "stray newline becomes space");
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

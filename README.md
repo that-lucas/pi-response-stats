@@ -17,10 +17,10 @@ All values reset when you start a new session. Before the first run completes, t
 
 ## Format
 
-The stats line is configurable. Set `format` in `~/.pi/agent/response-stats.json`:
+The stats line is configurable. Set `format` in `~/.pi/agent/response-stats.json`. A leading `\n` renders the stats on their own line below pi's stats (the default); without the prefix they append inline to pi's stats line, after a single hardcoded space:
 
 ```json
-{ "format": "⚡{runTps}/{avgTps} ⏱{runDuration}/{totalDuration}" }
+{ "format": "\n⚡{runTps}/{avgTps} ⏱{runDuration}/{totalDuration}" }
 ```
 
 ### Placeholders
@@ -56,6 +56,7 @@ Number specs follow .NET style: `0` (integer), `0.0` (one decimal), `0.##` (up t
 | Format string | Result |
 |---|---|
 | `⚡{runTps}/{avgTps} ⏱{runDuration}/{totalDuration}` (default) | `⚡123/99 ⏱32s/1m 54s` |
+| `⚡{runTps}/{avgTps}` (no `\n` prefix) | appended inline to pi's stats line, after one space |
 | same, before first run | `⚡0/0 ⏱0s/0s` |
 | `⏱{runHoursIfAny} {runMinutesIfAny} {runSecondsIfAny}` | `⏱ 32s` |
 | `⏱{runHours}h {runMinutes}m {runSeconds}s` | `⏱0h 0m 32s` |

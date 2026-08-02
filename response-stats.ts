@@ -1,9 +1,11 @@
 /**
  * Response stats footer extension.
  *
- * Shows a configurable stats line on its own footer line, below the stats
- * line that holds the context window usage info. The default format is
- * `⚡{runTps}/{avgTps} ⏱{runDuration}/{totalDuration}`; override it with a
+ * Shows a configurable stats line. A leading `\n` in the format renders
+ * it on its own line below the stats line that holds the context window
+ * usage info; without the prefix, the stats append inline to that line,
+ * separated by a single hardcoded space. The default format is
+ * `\n⚡{runTps}/{avgTps} ⏱{runDuration}/{totalDuration}`; override it with a
  * `format` string in `~/.pi/agent/response-stats.json` (full placeholder
  * reference in the README "Format" section). Runs span the whole agent
  * run (`agent_start` → `agent_end`): every LLM response, thinking block,
@@ -107,7 +109,7 @@ const UNIT_BY_COMPONENT: Record<string, string> = {
 
 const IF_ANY_SUFFIX = "IfAny";
 
-const DEFAULT_FORMAT = "\u26A1\uFE0E{runTps}/{avgTps} \u23F1\uFE0E\u2009{runDuration}/{totalDuration}";
+const DEFAULT_FORMAT = "\n\u26A1\uFE0E{runTps}/{avgTps} \u23F1\uFE0E\u2009{runDuration}/{totalDuration}";
 
 let statsFormat = DEFAULT_FORMAT;
 
@@ -179,6 +181,21 @@ function applyStatsFormat(format: string, values: StatsValues): string {
     return formatNumber(value, spec) + (unit ?? "");
   });
   return rendered.replace(/\s{2,}/g, " ").trim();
+}
+
+/**
+ * The stats render on their own footer line when the format starts with
+ * "\n"; without the prefix they append inline to pi's stats line.
+ */
+function splitNewlineDecision(format: string): { newLine: boolean; body: string } {
+  if (format.startsWith("\n")) return { newLine: true, body: format.slice(1) };
+  return { newLine: false, body: format };
+}
+
+/** Render the configured format with current values; stray newlines become spaces. */
+function renderStatsText(): { newLine: boolean; text: string } {
+  const { newLine, body } = splitNewlineDecision(statsFormat);
+  return { newLine, text: applyStatsFormat(body, buildStatsValues()).replace(/\n/g, " ") };
 }
 
 export default function (pi: ExtensionAPI) {
@@ -262,6 +279,8 @@ function renderFooter(
   footerData: ReadonlyFooterDataProvider,
   width: number,
 ): string[] {
+  const { newLine, text: statsText } = renderStatsText();
+
   // --- cumulative usage from ALL session entries ----------------------------
   let input = 0,
     output = 0,
@@ -321,6 +340,8 @@ function renderFooter(
   statsParts.push(contextPercentStr);
 
   let statsLeft = statsParts.join(" ");
+  // Inline mode: append the stats after a single hardcoded space.
+  if (!newLine && statsText.length > 0) statsLeft += ` ${statsText}`;
 
   // --- model name, right-aligned ----------------------------------------------
   const modelName = ctx.model?.id || "no-model";
@@ -381,8 +402,10 @@ function renderFooter(
     dimStatsLeft + dimRemainder,
   ];
 
-  // --- Stats line (configurable format), on its own line ----------------------
-  lines.push(truncateToWidth(theme.fg("dim", applyStatsFormat(statsFormat, buildStatsValues())), width, theme.fg("dim", "...")));
+  // --- Stats line (configurable format), own line unless format is inline -----
+  if (newLine) {
+    lines.push(truncateToWidth(theme.fg("dim", statsText), width, theme.fg("dim", "...")));
+  }
 
   const extensionStatuses = footerData.getExtensionStatuses();
   if (extensionStatuses.size > 0) {
