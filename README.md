@@ -11,7 +11,7 @@ The footer shows the current run's TPS and duration alongside session averages:
 ## What it shows
 
 - **Current run**: TPS and duration of the most recent agent run, live while running (every thinking block and tool call counts)
-- **Session totals**: average TPS and total time across all runs in the current session; the total time ticks live during a run (no jump at run end)
+- **Session totals**: average TPS and total time across all runs in the current session; the total time ticks live during a run
 
 All values reset when you start a new session. Before the first run completes, the line shows `⚡0/0 ⏱0s/0s`.
 
