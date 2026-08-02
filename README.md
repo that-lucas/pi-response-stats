@@ -1,24 +1,28 @@
-# response-stats
+# pi-response-stats
 
-Pi extension showing response stats in the footer: `{current}/{avg} TPS • {latest run}/{session total}`.
+A lightweight Pi extension that tracks and displays LLM response performance in the footer: tokens per second and response time, per agent run and cumulative across the session.
 
-## Install
-
-Copy `response-stats.ts` to `~/.pi/agent/extensions/`, then run `/reload` in pi.
-
-## What it shows
-
-One line below pi's stats, spanning each agent run (Enter → final answer):
+The footer shows the current run's TPS and duration alongside session averages, separated by a `•` delimiter:
 
 ```
 123/99 TPS • 32s/1m 54s
 ```
 
-| Part | Meaning |
-|------|---------|
-| `123` | Current run's TPS (live) |
-| `99` | Session average TPS |
-| `32s` | Latest run duration (live) |
-| `1m 54s` | Total session time |
+## What it shows
 
-Before the first run completes it shows `–/– –/–`.
+- **Current run** — TPS and duration of the most recent agent run, live while running (every thinking block and tool call counts)
+- **Session totals** — average TPS and total time across all runs in the current session
+
+Both values reset when you start a new session. Before the first run completes, the line shows `–/– –/–`.
+
+## Install
+
+```bash
+pi install git:github.com/that-lucas/pi-response-stats
+```
+
+Or copy `response-stats.ts` to `~/.pi/agent/extensions/` and run `/reload`.
+
+## Behavior
+
+Works automatically — no commands or shortcuts. The stats line appears as soon as the first run completes.
