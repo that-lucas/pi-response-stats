@@ -5,7 +5,7 @@ A lightweight Pi extension that tracks and displays LLM response performance in 
 The footer shows the current run's TPS and duration alongside session averages, separated by a `•` delimiter:
 
 ```
-123/99 TPS • 32s/1m 54s
+123/99 TPS • 32s/1min 54s
 ```
 
 ## What it shows
