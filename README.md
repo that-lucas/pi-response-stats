@@ -10,8 +10,8 @@ The footer shows the current run's TPS and duration alongside session averages:
 
 ## What it shows
 
-- **Current run** — TPS and duration of the most recent agent run, live while running (every thinking block and tool call counts)
-- **Session totals** — average TPS and total time across all runs in the current session
+- **Current run**: TPS and duration of the most recent agent run, live while running (every thinking block and tool call counts)
+- **Session totals**: average TPS and total time across all runs in the current session
 
 All values reset when you start a new session. Before the first run completes, the line shows `⚡0/0 ⏱0s/0s`.
 
@@ -46,7 +46,7 @@ The stats line is configurable. Set `format` in `~/.pi/agent/response-stats.json
 
 1. Substitute every `{name}` (and optional `{name:spec}` for numbers) with its value.
 2. `IfAny` placeholders expand to `value + unit` when non-zero, empty string when zero.
-3. Collapse consecutive spaces to one, trim ends — this removes the gaps left by vanished `IfAny` segments.
+3. Collapse consecutive spaces to one, trim ends (this removes the gaps left by vanished `IfAny` segments).
 4. Unknown placeholders stay literal so typos are visible.
 
 Number specs follow .NET style: `0` (integer), `0.0` (one decimal), `0.##` (up to two, no trailing zeros).
@@ -69,7 +69,7 @@ Number specs follow .NET style: `0` (integer), `0.0` (one decimal), `0.##` (up t
 # From npm (published releases)
 pi install npm:pi-response-stats
 
-# From git (unpinned — updates with `pi update --extensions`)
+# From git (unpinned; updates with `pi update --extensions`)
 pi install git:github.com/that-lucas/pi-response-stats
 ```
 
@@ -77,4 +77,4 @@ Or copy `response-stats.ts` to `~/.pi/agent/extensions/` and run `/reload`.
 
 ## Behavior
 
-Works automatically — no commands or shortcuts. The line is always visible; values fill in as runs complete.
+Works automatically, no commands or shortcuts. The line is always visible; values fill in as runs complete.
