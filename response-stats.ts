@@ -1,17 +1,17 @@
 /**
  * Response stats footer extension.
  *
- * Shows `⚡{current}/{avg} ⏱ {latest run time}/{session total}` on its
+ * Shows `⚡{current}/{avg} ⏱{latest run time}/{session total}` on its
  * own footer line, below the stats line that holds the context window usage
  * info. "current" and "latest run" span the whole agent run
  * (`agent_start` → `agent_end`): every LLM response, thinking block, and
  * tool call between the user pressing Enter and the agent delivering the
- * final answer, live while running. Always visible; `⚡–/– ⏱ –/–`
+ * final answer, live while running. Always visible; `⚡–/– ⏱–/–`
  * before the first run completes:
  *
  *   /tmp
  *   ↑2.1k ↓3.4k R45.2k W12.1k CH88.1% $0.123 42.5%/200k   model
- *   ⚡123/99 ⏱ 32s/1min 54s
+ *   ⚡123/99 ⏱32s/1min 54s
  *
  * - current: tokens/sec of the last completed agent run (live while running,
  *   using output tokens streamed so far).
