@@ -11,7 +11,7 @@
  *
  *   /tmp
  *   ↑2.1k ↓3.4k R45.2k W12.1k CH88.1% $0.123 42.5%/200k   model
- *   123/99 TPS • 32s/1m 54s
+ *   123/99 TPS • 32s/1min 54s
  *
  * - current: tokens/sec of the last completed agent run (live while running,
  *   using output tokens streamed so far).
@@ -64,7 +64,7 @@ function formatTps(n: number): string {
   return Math.round(n).toString();
 }
 
-/** Format a duration as 32s, 1m 54s, or 2h 5m. */
+/** Format a duration as 32s, 1min 54s, or 2h 5min. */
 function formatDuration(ms: number): string {
   const totalSec = Math.round(ms / 1000);
   const h = Math.floor(totalSec / 3600);
