@@ -18,7 +18,11 @@ All values reset when you start a new session. Before the first run completes, t
 ## Install
 
 ```bash
+# From npm (published releases)
 pi install npm:pi-response-stats
+
+# From git (unpinned — updates with `pi update --extensions`)
+pi install git:github.com/that-lucas/pi-response-stats
 ```
 
 Or copy `response-stats.ts` to `~/.pi/agent/extensions/` and run `/reload`.
