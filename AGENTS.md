@@ -14,7 +14,7 @@ Single-file pi extension (`response-stats.ts`) that renders a stats line in pi's
 
 ## Testing
 
-- `test-format.ts` (repo root) asserts the format engine against every documented case: `node --experimental-strip-types test-format.ts`.
+- `test-format.ts` asserts the format engine against every documented case: `node --experimental-strip-types test-format.ts`.
 - It contains **copies** of the pure functions, not imports (the extension can't be imported standalone; pi-tui only resolves inside pi's loader). Drift risk after edits — re-copy the functions when changing them, or prefer the refactor: extract the engine to a dependency-free module the test can import.
 - Always smoke test the real extension: `pi -e <path> -p "..."`.
 
