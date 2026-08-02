@@ -1,0 +1,60 @@
+{
+  "name": "pi-response-stats",
+  "version": "0.1.0",
+  "description": "Pi extension showing tokens-per-second and response time per agent run, plus session averages, in the footer",
+  "author": "that-lucas",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/that-lucas/pi-response-stats.git"
+  },
+  "homepage": "https://github.com/that-lucas/pi-response-stats#readme",
+  "bugs": {
+    "url": "https://github.com/that-lucas/pi-response-stats/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "extension",
+    "tps",
+    "tokens-per-second",
+    "response-time",
+    "stats",
+    "footer"
+  ],
+  "files": [
+    "response-stats.ts",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./response-stats.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-agent-core": {
+      "optional": true
+    },
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  }
+}
