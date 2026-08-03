@@ -37,8 +37,8 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 // ---------------------------------------------------------------------------
-// Pi caches extension factories across same-directory session replacements,
-// so module-level tracking state is reset explicitly on each session start.
+// Pi caches extension factories across same-directory session replacements.
+// New sessions and resumes reset state; reloads and forks restore the last persisted snapshot.
 // ---------------------------------------------------------------------------
 
 let runStartedAt = 0; // epoch ms when the in-flight agent run started
@@ -52,6 +52,8 @@ let totalDurationMs = 0;
 
 let requestRender: (() => void) | undefined;
 
+const STATS_STATE_ENTRY_TYPE = "response-stats-state";
+
 function resetTrackingState(): void {
   runStartedAt = 0;
   runTokens = 0;
@@ -61,6 +63,46 @@ function resetTrackingState(): void {
   lastRunTokens = 0;
   totalOutputTokens = 0;
   totalDurationMs = 0;
+}
+
+function snapshotTrackingState() {
+  return {
+    version: 1,
+    totalOutputTokens,
+    totalDurationMs,
+    lastTps,
+    lastDurationMs,
+    lastRunTokens,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isNonNegativeNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function restoreTrackingState(entries: readonly unknown[]): void {
+  resetTrackingState();
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index];
+    if (!isRecord(entry) || entry.type !== "custom" || entry.customType !== STATS_STATE_ENTRY_TYPE || !isRecord(entry.data)) {
+      continue;
+    }
+    const state = entry.data;
+    if (state.version !== 1 || !isNonNegativeNumber(state.totalOutputTokens) ||
+      !isNonNegativeNumber(state.totalDurationMs) || !isNonNegativeNumber(state.lastRunTokens)) {
+      continue;
+    }
+    totalOutputTokens = state.totalOutputTokens;
+    totalDurationMs = state.totalDurationMs;
+    lastRunTokens = state.lastRunTokens;
+    lastTps = isNonNegativeNumber(state.lastTps) ? state.lastTps : undefined;
+    lastDurationMs = isNonNegativeNumber(state.lastDurationMs) ? state.lastDurationMs : undefined;
+    return;
+  }
 }
 
 function liveTps(): number | undefined {
@@ -247,6 +289,7 @@ export default function (pi: ExtensionAPI) {
     lastRunTokens = tokens;
     totalOutputTokens += tokens;
     totalDurationMs += elapsedMs;
+    pi.appendEntry(STATS_STATE_ENTRY_TYPE, snapshotTrackingState());
     requestRender?.();
   });
 
@@ -255,8 +298,9 @@ export default function (pi: ExtensionAPI) {
   pi.on("thinking_level_select", () => requestRender?.());
 
   // --- replace the footer with a replica of the built-in one + TPS ----------
-  pi.on("session_start", (_event, ctx) => {
-    resetTrackingState();
+  pi.on("session_start", (event, ctx) => {
+    if (event.reason === "reload" || event.reason === "fork") restoreTrackingState(ctx.sessionManager.getEntries());
+    else resetTrackingState();
     ctx.ui.setFooter((tui: TUI, theme: Theme, footerData: ReadonlyFooterDataProvider) => {
       requestRender = () => tui.requestRender();
       return {
