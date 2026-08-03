@@ -38,7 +38,8 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Pi caches extension factories across same-directory session replacements.
-// New sessions and resumes reset state; reloads and forks restore the last persisted snapshot.
+// Every session start restores the latest snapshot from the active branch;
+// sessions without a snapshot naturally start from zero.
 // ---------------------------------------------------------------------------
 
 let runStartedAt = 0; // epoch ms when the in-flight agent run started
@@ -76,6 +77,10 @@ function snapshotTrackingState() {
   };
 }
 
+function persistTrackingState(pi: ExtensionAPI): void {
+  pi.appendEntry(STATS_STATE_ENTRY_TYPE, snapshotTrackingState());
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -88,19 +93,30 @@ function restoreTrackingState(entries: readonly unknown[]): void {
   resetTrackingState();
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
-    if (!isRecord(entry) || entry.type !== "custom" || entry.customType !== STATS_STATE_ENTRY_TYPE || !isRecord(entry.data)) {
+    if (!isRecord(entry) || entry.type !== "custom" || entry.customType !== STATS_STATE_ENTRY_TYPE) {
       continue;
     }
+    if (!isRecord(entry.data)) return;
     const state = entry.data;
     if (state.version !== 1 || !isNonNegativeNumber(state.totalOutputTokens) ||
       !isNonNegativeNumber(state.totalDurationMs) || !isNonNegativeNumber(state.lastRunTokens)) {
-      continue;
+      return;
+    }
+    const hasLastRun = state.lastRunTokens > 0;
+    const validLastTps = isNonNegativeNumber(state.lastTps);
+    const validLastDuration = isNonNegativeNumber(state.lastDurationMs);
+    if (hasLastRun !== validLastTps || hasLastRun !== validLastDuration ||
+      state.lastRunTokens > state.totalOutputTokens ||
+      (!hasLastRun && (state.totalOutputTokens !== 0 || state.totalDurationMs !== 0)) ||
+      (hasLastRun && (state.lastTps === 0 || state.lastDurationMs === 0 || state.totalDurationMs === 0)) ||
+      (validLastDuration && state.lastDurationMs > state.totalDurationMs)) {
+      return;
     }
     totalOutputTokens = state.totalOutputTokens;
     totalDurationMs = state.totalDurationMs;
     lastRunTokens = state.lastRunTokens;
-    lastTps = isNonNegativeNumber(state.lastTps) ? state.lastTps : undefined;
-    lastDurationMs = isNonNegativeNumber(state.lastDurationMs) ? state.lastDurationMs : undefined;
+    lastTps = validLastTps ? state.lastTps : undefined;
+    lastDurationMs = validLastDuration ? state.lastDurationMs : undefined;
     return;
   }
 }
@@ -289,7 +305,7 @@ export default function (pi: ExtensionAPI) {
     lastRunTokens = tokens;
     totalOutputTokens += tokens;
     totalDurationMs += elapsedMs;
-    pi.appendEntry(STATS_STATE_ENTRY_TYPE, snapshotTrackingState());
+    persistTrackingState(pi);
     requestRender?.();
   });
 
@@ -298,9 +314,8 @@ export default function (pi: ExtensionAPI) {
   pi.on("thinking_level_select", () => requestRender?.());
 
   // --- replace the footer with a replica of the built-in one + TPS ----------
-  pi.on("session_start", (event, ctx) => {
-    if (event.reason === "reload" || event.reason === "fork") restoreTrackingState(ctx.sessionManager.getEntries());
-    else resetTrackingState();
+  pi.on("session_start", (_event, ctx) => {
+    restoreTrackingState(ctx.sessionManager.getBranch());
     ctx.ui.setFooter((tui: TUI, theme: Theme, footerData: ReadonlyFooterDataProvider) => {
       requestRender = () => tui.requestRender();
       return {
@@ -313,6 +328,11 @@ export default function (pi: ExtensionAPI) {
         },
       };
     });
+  });
+
+  pi.on("session_tree", (_event, ctx) => {
+    restoreTrackingState(ctx.sessionManager.getBranch());
+    requestRender?.();
   });
 }
 

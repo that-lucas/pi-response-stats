@@ -1,5 +1,5 @@
 // Standalone test of the format engine copied from response-stats.ts.
-// Run: node --experimental-strip-types /tmp/test-format.ts
+// Run: node --experimental-strip-types test-format.ts
 
 function formatDuration(ms: number): string {
   const totalSec = Math.round(ms / 1000);

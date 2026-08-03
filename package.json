@@ -13,6 +13,9 @@
   "bugs": {
     "url": "https://github.com/that-lucas/pi-response-stats/issues"
   },
+  "scripts": {
+    "test": "node --experimental-strip-types test-format.ts && node --test test-lifecycle.mjs"
+  },
   "keywords": [
     "pi-package",
     "pi",
@@ -56,5 +59,8 @@
     "typebox": {
       "optional": true
     }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.83.0"
   }
 }

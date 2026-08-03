@@ -13,7 +13,17 @@ The footer shows the current run's TPS and duration alongside session averages:
 - **Current run**: TPS and duration of the most recent agent run, live while running (every thinking block and tool call counts)
 - **Session totals**: average TPS and total time across all runs in the current session; the total time ticks live during a run
 
-All values reset when you start a new session. Before the first run completes, the line shows `⚡0/0 ⏱0s/0s`.
+Statistics are stored per session and branch:
+
+| Mode | Behavior |
+|---|---|
+| New session | Resets to zero |
+| `/resume` | Restores that session's active-branch statistics |
+| `/reload` | Restores the current statistics |
+| `/fork` | Inherits statistics from the selected branch |
+| `/tree` | Restores statistics for the branch you navigate to |
+
+If a session or branch has no stored snapshot, it starts at `⚡0/0 ⏱0s/0s`.
 
 ## Format
 
