@@ -37,9 +37,8 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 // ---------------------------------------------------------------------------
-// TPS tracking state. Module-level on purpose: extension instances are
-// recreated per session (session switch, /new, /resume, /reload), so this
-// state naturally scopes to the current session.
+// Pi caches extension factories across same-directory session replacements,
+// so module-level tracking state is reset explicitly on each session start.
 // ---------------------------------------------------------------------------
 
 let runStartedAt = 0; // epoch ms when the in-flight agent run started
@@ -52,6 +51,17 @@ let totalOutputTokens = 0; // session totals over completed agent runs
 let totalDurationMs = 0;
 
 let requestRender: (() => void) | undefined;
+
+function resetTrackingState(): void {
+  runStartedAt = 0;
+  runTokens = 0;
+  messageTokens = 0;
+  lastTps = undefined;
+  lastDurationMs = undefined;
+  lastRunTokens = 0;
+  totalOutputTokens = 0;
+  totalDurationMs = 0;
+}
 
 function liveTps(): number | undefined {
   if (runStartedAt === 0) return undefined;
@@ -246,6 +256,7 @@ export default function (pi: ExtensionAPI) {
 
   // --- replace the footer with a replica of the built-in one + TPS ----------
   pi.on("session_start", (_event, ctx) => {
+    resetTrackingState();
     ctx.ui.setFooter((tui: TUI, theme: Theme, footerData: ReadonlyFooterDataProvider) => {
       requestRender = () => tui.requestRender();
       return {
