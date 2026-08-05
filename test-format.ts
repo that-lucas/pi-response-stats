@@ -1,11 +1,19 @@
 // Standalone test of the format engine copied from response-stats.ts.
 // Run: node --experimental-strip-types test-format.ts
 
-function formatDuration(ms: number): string {
+function formatDuration(ms: number, full = false): string {
   const totalSec = Math.round(ms / 1000);
-  const h = Math.floor(totalSec / 3600);
+  const d = Math.floor(totalSec / 86400);
+  const h = Math.floor((totalSec % 86400) / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
   const s = totalSec % 60;
+  if (full) {
+    if (d > 0) return `${d}d ${h}h ${m}m ${s}s`;
+    if (h > 0) return `${h}h ${m}m ${s}s`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  }
+  if (d > 0) return `${d}d ${h}h`;
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
@@ -27,6 +35,7 @@ function formatNumber(value: number, spec: string | undefined): string {
 const UNIT_BY_COMPONENT: Record<string, string> = {
   runHours: "h", runMinutes: "m", runSeconds: "s",
   totalHours: "h", totalMinutes: "m", totalSeconds: "s",
+  sessionDays: "d", sessionHours: "h", sessionMinutes: "m", sessionSeconds: "s",
 };
 const IF_ANY_SUFFIX = "IfAny";
 type StatsValues = Record<string, number | string>;
@@ -52,9 +61,10 @@ function applyStatsFormat(format: string, values: StatsValues): string {
 
 const values: StatsValues = {
   runTps: 123, avgTps: 99, runTokens: 421, totalTokens: 3842,
-  runDuration: "32s", totalDuration: "1m 54s",
+  runDuration: "32s", totalDuration: "1m 54s", sessionDuration: "2d 4h 5m 6s",
   runHours: 0, runMinutes: 0, runSeconds: 32,
   totalHours: 0, totalMinutes: 1, totalSeconds: 54,
+  sessionDays: 2, sessionHours: 4, sessionMinutes: 5, sessionSeconds: 6,
 };
 const valuesLong: StatsValues = {
   ...values,
@@ -63,9 +73,10 @@ const valuesLong: StatsValues = {
 };
 const preRun: StatsValues = {
   runTps: 0, avgTps: 0, runTokens: 0, totalTokens: 0,
-  runDuration: "0s", totalDuration: "0s",
+  runDuration: "0s", totalDuration: "0s", sessionDuration: "0s",
   runHours: 0, runMinutes: 0, runSeconds: 0,
   totalHours: 0, totalMinutes: 0, totalSeconds: 0,
+  sessionDays: 0, sessionHours: 0, sessionMinutes: 0, sessionSeconds: 0,
 };
 
 let failures = 0;
@@ -79,7 +90,13 @@ function check(actual: string, expected: string, label: string) {
 check(formatDuration(32_000), "32s", "formatDuration 32s");
 check(formatDuration(114_000), "1m 54s", "formatDuration 1m 54s");
 check(formatDuration(7_500_000), "2h 5m", "formatDuration 2h 5m");
+check(formatDuration(183_600_000), "2d 3h", "formatDuration 2d 3h");
 check(formatDuration(0), "0s", "formatDuration 0s");
+check(formatDuration(183_602_000, true), "2d 3h 0m 2s", "formatDuration full keeps zeros");
+check(formatDuration(7_500_000, true), "2h 5m 0s", "formatDuration full 2h 5m 0s");
+check(formatDuration(114_000, true), "1m 54s", "formatDuration full 1m 54s");
+check(formatDuration(32_000, true), "32s", "formatDuration full 32s");
+check(formatDuration(0, true), "0s", "formatDuration full 0s");
 
 // --- number specs ------------------------------------------------------------
 check(formatNumber(123, undefined), "123", "formatNumber default int");
@@ -106,11 +123,17 @@ check(applyStatsFormat("{runSecondsIfAny}", valuesLong), "3s", "{runSecondsIfAny
 check(applyStatsFormat("{totalHoursIfAny}", valuesLong), "", "{totalHoursIfAny} zero -> empty");
 check(applyStatsFormat("{totalMinutesIfAny}", valuesLong), "1m", "{totalMinutesIfAny}");
 check(applyStatsFormat("{totalSecondsIfAny}", valuesLong), "54s", "{totalSecondsIfAny}");
+check(applyStatsFormat("{sessionDuration}", valuesLong), "2d 4h 5m 6s", "{sessionDuration}");
+check(applyStatsFormat("{sessionDays} {sessionHours} {sessionMinutes} {sessionSeconds}", valuesLong), "2 4 5 6", "raw session components");
+check(applyStatsFormat("{sessionDaysIfAny}", valuesLong), "2d", "{sessionDaysIfAny}");
+check(applyStatsFormat("{sessionHoursIfAny}", valuesLong), "4h", "{sessionHoursIfAny}");
+check(applyStatsFormat("{sessionMinutesIfAny}", valuesLong), "5m", "{sessionMinutesIfAny}");
+check(applyStatsFormat("{sessionSecondsIfAny}", valuesLong), "6s", "{sessionSecondsIfAny}");
 
 // --- examples from the docs ---------------------------------------------------
-const DEF = "\n\u26A1\uFE0E{runTps}/{avgTps} \u23F1\uFE0E\u2009{runDuration}/{totalDuration}";
-check(applyStatsFormat(DEF, values), "\u26A1\uFE0E123/99 \u23F1\uFE0E\u200932s/1m 54s", "default format");
-check(applyStatsFormat(DEF, preRun), "\u26A1\uFE0E0/0 \u23F1\uFE0E\u20090s/0s", "default pre-run");
+const DEF = "\n\u26A1\uFE0E{runTps}/{avgTps} \u23F1\uFE0E\u2009{runDuration}/{totalDuration}/{sessionDuration}";
+check(applyStatsFormat(DEF, values), "\u26A1\uFE0E123/99 \u23F1\uFE0E\u200932s/1m 54s/2d 4h 5m 6s", "default format");
+check(applyStatsFormat(DEF, preRun), "\u26A1\uFE0E0/0 \u23F1\uFE0E\u20090s/0s/0s", "default pre-run");
 check(applyStatsFormat("\u23F1\uFE0E{runHoursIfAny} {runMinutesIfAny} {runSecondsIfAny}", values), "\u23F1\uFE0E 32s", "IfAny collapses zeros");
 check(applyStatsFormat("\u23F1\uFE0E{runHours}h {runMinutes}m {runSeconds}s", values), "\u23F1\uFE0E0h 0m 32s", "raw components with units");
 check(
@@ -118,6 +141,12 @@ check(
   "32s / 1m 54s",
   "composed IfAny",
 );
+check(
+  applyStatsFormat("{sessionDaysIfAny} {sessionHoursIfAny} {sessionMinutesIfAny} {sessionSecondsIfAny}", values),
+  "2d 4h 5m 6s",
+  "composed session IfAny",
+);
+check(applyStatsFormat("{sessionDaysIfAny}", preRun), "", "{sessionDaysIfAny} zero -> empty");
 check(applyStatsFormat("{runTps:0.0}/{avgTps}", values), "123.0/99", "spec on runTps");
 check(applyStatsFormat("{runTokens} tok", values), "421 tok", "tokens literal suffix");
 check(applyStatsFormat("x {bogus} y", values), "x {bogus} y", "unknown stays literal");
@@ -138,7 +167,7 @@ check(JSON.stringify(nl), JSON.stringify({ newLine: true, text: "⚡123/99" }), 
 const inl = renderStatsText("⚡{runTps}/{avgTps}", values);
 check(JSON.stringify(inl), JSON.stringify({ newLine: false, text: "⚡123/99" }), "no prefix -> inline");
 const def = renderStatsText(DEF, values);
-check(JSON.stringify(def), JSON.stringify({ newLine: true, text: "\u26A1\uFE0E123/99 \u23F1\uFE0E\u200932s/1m 54s" }), "default format -> own line");
+check(JSON.stringify(def), JSON.stringify({ newLine: true, text: "\u26A1\uFE0E123/99 \u23F1\uFE0E\u200932s/1m 54s/2d 4h 5m 6s" }), "default format -> own line");
 const stray = renderStatsText("a\nb {runTps}", values);
 check(JSON.stringify(stray), JSON.stringify({ newLine: false, text: "a b 123" }), "stray newline becomes space");
 

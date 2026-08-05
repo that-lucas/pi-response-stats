@@ -21,11 +21,14 @@ function stateEntry({
   lastRunTokens,
   lastTps,
   lastDurationMs,
+  sessionStartedAt,
 }) {
+  const data = { version, totalOutputTokens, totalDurationMs, lastRunTokens, lastTps, lastDurationMs };
+  if (sessionStartedAt !== undefined) data.sessionStartedAt = sessionStartedAt;
   return {
     type: "custom",
     customType: STATE_TYPE,
-    data: { version, totalOutputTokens, totalDurationMs, lastRunTokens, lastTps, lastDurationMs },
+    data,
   };
 }
 
@@ -36,6 +39,18 @@ function completedState(tokens, durationMs) {
     lastRunTokens: tokens,
     lastTps: tokens / (durationMs / 1000),
     lastDurationMs: durationMs,
+  });
+}
+
+function completedStateV2(tokens, durationMs, sessionStartedAt) {
+  return stateEntry({
+    version: 2,
+    totalOutputTokens: tokens,
+    totalDurationMs: durationMs,
+    lastRunTokens: tokens,
+    lastTps: tokens / (durationMs / 1000),
+    lastDurationMs: durationMs,
+    sessionStartedAt,
   });
 }
 
@@ -179,7 +194,7 @@ test("an invalid newest snapshot resets instead of falling back to stale state",
 test("an unsupported newest snapshot does not roll back to an older schema", async () => {
   const valid = completedState(100, 1_000);
   const unsupported = stateEntry({
-    version: 2,
+    version: 3,
     totalOutputTokens: 200,
     totalDurationMs: 2_000,
     lastRunTokens: 200,
@@ -207,6 +222,90 @@ test("internally inconsistent state is rejected atomically", async () => {
     totalOutputTokens: 100,
     totalDurationMs: 1_000,
     lastRunTokens: 0,
+  });
+  const state = { branch: [valid, invalid], allEntries: [valid, invalid] };
+  const reloaded = await loadInstance("reload", state);
+  await completeRun(reloaded, 50);
+  assert.equal(latestState(state.branch).totalOutputTokens, 50);
+});
+
+test("a fresh session starts the session timer and persists it as version 2", async () => {
+  const state = { branch: [], allEntries: [] };
+  const before = Date.now();
+  const instance = await loadInstance("new", state);
+  await completeRun(instance, 50);
+  const snapshot = latestState(state.branch);
+  assert.equal(snapshot.version, 2);
+  assert.ok(snapshot.sessionStartedAt >= before && snapshot.sessionStartedAt <= Date.now());
+});
+
+test("resume restores the session's original start time", async () => {
+  const startedAt = Date.now() - 48 * 3600 * 1000;
+  const old = completedStateV2(100, 1_000, startedAt);
+  const state = { branch: [old], allEntries: [old] };
+  const resumed = await loadInstance("resume", state);
+  await completeRun(resumed, 50);
+  assert.equal(latestState(state.branch).sessionStartedAt, startedAt);
+});
+
+test("reload keeps the session start time across module reloads", async () => {
+  const startedAt = Date.now() - 3_600_000;
+  const old = completedStateV2(100, 1_000, startedAt);
+  const state = { branch: [old], allEntries: [old] };
+  await loadInstance("resume", state);
+  clearExtensionCache();
+  const reloaded = await loadInstance("reload", state);
+  await completeRun(reloaded, 50);
+  assert.equal(latestState(state.branch).sessionStartedAt, startedAt);
+});
+
+test("fork inherits the source session's start time", async () => {
+  const startedAt = Date.now() - 7_200_000;
+  const inherited = completedStateV2(100, 1_000, startedAt);
+  const state = { branch: [inherited], allEntries: [inherited] };
+  const forked = await loadInstance("fork", state);
+  await completeRun(forked, 50);
+  assert.equal(latestState(state.branch).sessionStartedAt, startedAt);
+});
+
+test("tree navigation keeps the session start time", async () => {
+  const startedAt = Date.now() - 7_200_000;
+  const branchA = [completedStateV2(100, 1_000, startedAt)];
+  const branchB = [completedStateV2(200, 2_000, startedAt)];
+  const state = { branch: branchB, allEntries: [...branchA, ...branchB] };
+  const instance = await loadInstance("reload", state);
+
+  state.branch = branchA;
+  await emit(instance.extension, "session_tree", {
+    type: "session_tree",
+    oldLeafId: "branch-b",
+    newLeafId: "branch-a",
+  }, instance.ctx);
+  await completeRun(instance, 50);
+  assert.equal(latestState(branchA).sessionStartedAt, startedAt);
+});
+
+test("a version 1 snapshot (no session start) starts the timer fresh", async () => {
+  const old = completedState(100, 1_000);
+  const state = { branch: [old], allEntries: [old] };
+  const before = Date.now();
+  const resumed = await loadInstance("resume", state);
+  await completeRun(resumed, 50);
+  const snapshot = latestState(state.branch);
+  assert.equal(snapshot.version, 2);
+  assert.ok(snapshot.sessionStartedAt >= before && snapshot.sessionStartedAt <= Date.now());
+});
+
+test("a version 2 snapshot with an invalid session start is rejected", async () => {
+  const valid = completedStateV2(100, 1_000, Date.now() - 60_000);
+  const invalid = stateEntry({
+    version: 2,
+    totalOutputTokens: 200,
+    totalDurationMs: 2_000,
+    lastRunTokens: 200,
+    lastTps: 100,
+    lastDurationMs: 2_000,
+    sessionStartedAt: -5,
   });
   const state = { branch: [valid, invalid], allEntries: [valid, invalid] };
   const reloaded = await loadInstance("reload", state);

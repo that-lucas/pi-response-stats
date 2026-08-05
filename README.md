@@ -5,37 +5,38 @@ A lightweight Pi extension that tracks and displays LLM response performance in 
 The footer shows the current run's TPS and duration alongside session averages:
 
 ```
-⚡123/99 ⏱32s/1m 54s
+⚡123/99 ⏱32s/1m 54s/2d 4h 5m 6s
 ```
 
 ## What it shows
 
 - **Current run**: TPS and duration of the most recent agent run, live while running (every thinking block and tool call counts)
 - **Session totals**: average TPS and total time across all runs in the current session; the total time ticks live during a run
+- **Session runtime**: wall-clock time since the current session started, updating every second regardless of activity (agent runs, typing, or idle)
 
 Statistics are stored per session and branch:
 
-| Mode | Behavior |
-|---|---|
-| New session | Resets to zero |
-| `/resume` | Restores that session's active-branch statistics |
-| `/reload` | Restores the current statistics |
-| `/fork` | Inherits statistics from the selected branch |
-| `/tree` | Restores statistics for the branch you navigate to |
+| Mode | Run statistics | Session timer |
+|---|---|---|
+| New session | Resets to zero | Starts at 0 |
+| `/resume` | Restores that session's active-branch statistics | Restored, continues |
+| `/reload` | Restores the current statistics | Continues |
+| `/fork` | Inherits statistics from the selected branch | Inherits the source session's start time |
+| `/tree` | Restores statistics for the branch you navigate to | Continues (same session) |
 
-If a session or branch has no stored snapshot, it starts at `⚡0/0 ⏱0s/0s`.
+If a session or branch has no stored snapshot, it starts at `⚡0/0 ⏱0s/0s/0s`.
 
 ## Format
 
 The stats line is configurable. Set `format` in `~/.pi/agent/response-stats.json`. A leading `\n` renders the stats on their own line below pi's stats (the default); without the prefix they append inline to pi's stats line, after a single hardcoded space:
 
 ```json
-{ "format": "\n⚡{runTps}/{avgTps} ⏱{runDuration}/{totalDuration}" }
+{ "format": "\n⚡{runTps}/{avgTps} ⏱{runDuration}/{totalDuration}/{sessionDuration}" }
 ```
 
 ### Placeholders
 
-| Placeholder | Kind | No-data / zero behavior | Example (run: 1h 2m 3s · total: 0h 1m 54s · TPS 123 · 421 tok) |
+| Placeholder | Kind | No-data / zero behavior | Example (run: 1h 2m 3s · total: 0h 1m 54s · session: 2d 4h 5m 6s · TPS 123 · 421 tok) |
 |---|---|---|---|
 | `{runTps}` | int | `0` | 123 |
 | `{avgTps}` | int | `0` | 99 |
@@ -43,14 +44,20 @@ The stats line is configurable. Set `format` in `~/.pi/agent/response-stats.json
 | `{totalTokens}` | int | `0` | 3842 |
 | `{runDuration}` | string, pre-formatted | `0s` | 1h 2m |
 | `{totalDuration}` | string, pre-formatted | `0s` | 1m 54s |
+| `{sessionDuration}` | string, pre-formatted | `0s` | 2d 4h 5m 6s |
 | `{runHours}` `{runMinutes}` `{runSeconds}` | int | always renders, incl. 0 | 1, 2, 3 |
 | `{totalHours}` `{totalMinutes}` `{totalSeconds}` | int | always renders, incl. 0 | 0, 1, 54 |
+| `{sessionDays}` `{sessionHours}` `{sessionMinutes}` `{sessionSeconds}` | int | always renders, incl. 0 | 2, 4, 5, 6 |
 | `{runHoursIfAny}` | string, conditional | `` (empty) | 1h |
 | `{runMinutesIfAny}` | string, conditional | `` (empty) | 2m |
 | `{runSecondsIfAny}` | string, conditional | `` (empty) | 3s |
 | `{totalHoursIfAny}` | string, conditional | `` (empty) | `` (empty) |
 | `{totalMinutesIfAny}` | string, conditional | `` (empty) | 1m |
 | `{totalSecondsIfAny}` | string, conditional | `` (empty) | 54s |
+| `{sessionDaysIfAny}` | string, conditional | `` (empty) | 2d |
+| `{sessionHoursIfAny}` | string, conditional | `` (empty) | 4h |
+| `{sessionMinutesIfAny}` | string, conditional | `` (empty) | 5m |
+| `{sessionSecondsIfAny}` | string, conditional | `` (empty) | 6s |
 
 ### Logic
 
@@ -61,16 +68,17 @@ The stats line is configurable. Set `format` in `~/.pi/agent/response-stats.json
 
 Number specs follow .NET style: `0` (integer), `0.0` (one decimal), `0.##` (up to two, no trailing zeros).
 
-### Examples (run: 32s · total: 1m 54s · TPS 123/99)
+### Examples (run: 32s · total: 1m 54s · session: 2d 4h 5m 6s · TPS 123/99)
 
 | Format string | Result |
 |---|---|
-| `⚡{runTps}/{avgTps} ⏱{runDuration}/{totalDuration}` (default) | `⚡123/99 ⏱32s/1m 54s` |
+| `⚡{runTps}/{avgTps} ⏱{runDuration}/{totalDuration}/{sessionDuration}` (default) | `⚡123/99 ⏱32s/1m 54s/2d 4h 5m 6s` |
 | `⚡{runTps}/{avgTps}` (no `\n` prefix) | appended inline to pi's stats line, after one space |
-| same, before first run | `⚡0/0 ⏱0s/0s` |
+| same, before first run | `⚡0/0 ⏱0s/0s/0s` |
 | `⏱{runHoursIfAny} {runMinutesIfAny} {runSecondsIfAny}` | `⏱ 32s` |
 | `⏱{runHours}h {runMinutes}m {runSeconds}s` | `⏱0h 0m 32s` |
 | `{runHoursIfAny} {runMinutesIfAny} {runSecondsIfAny} / {totalHoursIfAny} {totalMinutesIfAny} {totalSecondsIfAny}` | `32s / 1m 54s` |
+| `{sessionDaysIfAny} {sessionHoursIfAny} {sessionMinutesIfAny} {sessionSecondsIfAny}` | `2d 4h 5m 6s` |
 | `{runTps:0.0}/{avgTps}` | `123.0/99` |
 | `{runTokens} tok` | `421 tok` |
 

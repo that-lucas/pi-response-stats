@@ -5,22 +5,25 @@
  * it on its own line below the stats line that holds the context window
  * usage info; without the prefix, the stats append inline to that line,
  * separated by a single hardcoded space. The default format is
- * `\n⚡{runTps}/{avgTps} ⏱{runDuration}/{totalDuration}`; override it with a
- * `format` string in `~/.pi/agent/response-stats.json` (full placeholder
- * reference in the README "Format" section). Runs span the whole agent
- * run (`agent_start` → `agent_end`): every LLM response, thinking block,
- * and tool call between the user pressing Enter and the agent delivering
- * the final answer, live while running. Always visible; `⚡0/0 ⏱0s/0s`
- * before the first run completes:
+ * `\n⚡{runTps}/{avgTps} ⏱{runDuration}/{totalDuration}/{sessionDuration}`;
+ * override it with a `format` string in `~/.pi/agent/response-stats.json`
+ * (full placeholder reference in the README "Format" section). Runs span
+ * the whole agent run (`agent_start` → `agent_end`): every LLM response,
+ * thinking block, and tool call between the user pressing Enter and the
+ * agent delivering the final answer, live while running. Always visible;
+ * `⚡0/0 ⏱0s/0s/0s` before the first run completes:
  *
  *   /tmp
  *   ↑2.1k ↓3.4k R45.2k W12.1k CH88.1% $0.123 42.5%/200k   model
- *   ⚡123/99 ⏱ 32s/1m 54s
+ *   ⚡123/99 ⏱ 32s/1m 54s/2d 4h 5m 6s
  *
  * - runTps: tokens/sec of the current agent run (live while running).
  * - avgTps: session average tokens/sec over all completed agent runs
  *   (output tokens / wall time, thinking and tool calls included). Resets
  *   per session.
+ * - sessionDuration: wall-clock time since the current session started,
+ *   updating every second whether the agent is running or not. Persisted
+ *   per session: `/new` restarts it, resume/reload/fork continue it.
  *
  * The built-in footer is replaced via ctx.ui.setFooter(); this footer
  * replicates its layout (pwd line, stats line, extension statuses) with the
@@ -35,6 +38,7 @@ import { truncateToWidth, visibleWidth, type TUI } from "@earendil-works/pi-tui"
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { performance } from "node:perf_hooks";
 
 // ---------------------------------------------------------------------------
 // Pi caches extension factories across same-directory session replacements.
@@ -50,12 +54,51 @@ let lastDurationMs: number | undefined; // wall time of the last completed agent
 let lastRunTokens = 0; // output tokens of the last completed agent run
 let totalOutputTokens = 0; // session totals over completed agent runs
 let totalDurationMs = 0;
+let sessionStartedAt = 0; // epoch ms when the current session started
+let tickTimer: ReturnType<typeof setInterval> | undefined; // 1s footer refresh
+
+// The wall clock can step backwards (NTP adjustments). All live timing runs
+// on a monotonic clock framed to wall time at the last re-anchor, so the
+// displayed durations can never go back in time.
+let anchorWallMs = Date.now();
+let anchorMonoMs = performance.now();
+
+/** Monotonic "now" in the wall-clock frame of the last re-anchor. */
+function monotonicNow(): number {
+  return anchorWallMs + (performance.now() - anchorMonoMs);
+}
+
+/** Re-sync the monotonic frame to the wall clock (session start/restore). */
+function reanchorNow(): void {
+  anchorWallMs = Date.now();
+  anchorMonoMs = performance.now();
+}
 
 let requestRender: (() => void) | undefined;
+
+/**
+ * The footer recomputes all values on every TUI render pass; pi's own
+ * renders (streaming, tree navigation, model changes) already cover
+ * activity. This tick guarantees one pass per second so the session timer
+ * and live run values stay fresh while idle; it is the only render trigger
+ * the extension owns.
+ */
+function startSessionTick(): void {
+  if (tickTimer) return;
+  tickTimer = setInterval(() => requestRender?.(), 1000);
+  tickTimer.unref?.();
+}
+
+function stopSessionTick(): void {
+  if (!tickTimer) return;
+  clearInterval(tickTimer);
+  tickTimer = undefined;
+}
 
 const STATS_STATE_ENTRY_TYPE = "response-stats-state";
 
 function resetTrackingState(): void {
+  reanchorNow();
   runStartedAt = 0;
   runTokens = 0;
   messageTokens = 0;
@@ -64,20 +107,23 @@ function resetTrackingState(): void {
   lastRunTokens = 0;
   totalOutputTokens = 0;
   totalDurationMs = 0;
+  sessionStartedAt = monotonicNow(); // no snapshot: the session timer starts now
 }
 
 function snapshotTrackingState() {
   return {
-    version: 1,
+    version: 2,
     totalOutputTokens,
     totalDurationMs,
     lastTps,
     lastDurationMs,
     lastRunTokens,
+    sessionStartedAt,
   };
 }
 
 function persistTrackingState(pi: ExtensionAPI): void {
+  if (sessionStartedAt <= 0) sessionStartedAt = monotonicNow();
   pi.appendEntry(STATS_STATE_ENTRY_TYPE, snapshotTrackingState());
 }
 
@@ -89,6 +135,10 @@ function isNonNegativeNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
+function isPositiveNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
 function restoreTrackingState(entries: readonly unknown[]): void {
   resetTrackingState();
   for (let index = entries.length - 1; index >= 0; index--) {
@@ -98,10 +148,12 @@ function restoreTrackingState(entries: readonly unknown[]): void {
     }
     if (!isRecord(entry.data)) return;
     const state = entry.data;
-    if (state.version !== 1 || !isNonNegativeNumber(state.totalOutputTokens) ||
+    if ((state.version !== 1 && state.version !== 2) ||
+      !isNonNegativeNumber(state.totalOutputTokens) ||
       !isNonNegativeNumber(state.totalDurationMs) || !isNonNegativeNumber(state.lastRunTokens)) {
       return;
     }
+    if (state.version === 2 && !isPositiveNumber(state.sessionStartedAt)) return;
     const hasLastRun = state.lastRunTokens > 0;
     const validLastTps = isNonNegativeNumber(state.lastTps);
     const validLastDuration = isNonNegativeNumber(state.lastDurationMs);
@@ -117,6 +169,7 @@ function restoreTrackingState(entries: readonly unknown[]): void {
     lastRunTokens = state.lastRunTokens;
     lastTps = validLastTps ? state.lastTps : undefined;
     lastDurationMs = validLastDuration ? state.lastDurationMs : undefined;
+    if (state.version === 2) sessionStartedAt = state.sessionStartedAt;
     return;
   }
 }
@@ -125,7 +178,7 @@ function liveTps(): number | undefined {
   if (runStartedAt === 0) return undefined;
   const tokens = runTokens + messageTokens;
   if (tokens <= 0) return undefined;
-  const elapsedSec = (Date.now() - runStartedAt) / 1000;
+  const elapsedSec = (monotonicNow() - runStartedAt) / 1000;
   return elapsedSec > 0 ? tokens / elapsedSec : undefined;
 }
 
@@ -134,12 +187,20 @@ function sessionAvgTps(): number | undefined {
   return totalOutputTokens / (totalDurationMs / 1000);
 }
 
-/** Format a duration as 32s, 1m 54s, or 2h 5m. */
-function formatDuration(ms: number): string {
+/** Format a duration as 32s, 1m 54s, or 2h 5m; with full: 2d 4h 3m 2s. */
+function formatDuration(ms: number, full = false): string {
   const totalSec = Math.round(ms / 1000);
-  const h = Math.floor(totalSec / 3600);
+  const d = Math.floor(totalSec / 86400);
+  const h = Math.floor((totalSec % 86400) / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
   const s = totalSec % 60;
+  if (full) {
+    if (d > 0) return `${d}d ${h}h ${m}m ${s}s`;
+    if (h > 0) return `${h}h ${m}m ${s}s`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  }
+  if (d > 0) return `${d}d ${h}h`;
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
@@ -173,11 +234,15 @@ const UNIT_BY_COMPONENT: Record<string, string> = {
   totalHours: "h",
   totalMinutes: "m",
   totalSeconds: "s",
+  sessionDays: "d",
+  sessionHours: "h",
+  sessionMinutes: "m",
+  sessionSeconds: "s",
 };
 
 const IF_ANY_SUFFIX = "IfAny";
 
-const DEFAULT_FORMAT = "\n\u26A1\uFE0E{runTps}/{avgTps} \u23F1\uFE0E\u2009{runDuration}/{totalDuration}";
+const DEFAULT_FORMAT = "\n\u26A1\uFE0E{runTps}/{avgTps} \u23F1\uFE0E\u2009{runDuration}/{totalDuration}/{sessionDuration}";
 
 let statsFormat = DEFAULT_FORMAT;
 
@@ -200,32 +265,46 @@ type StatsValues = Record<string, number | string>;
 
 /** All documented placeholders, computed from the current tracking state. */
 function buildStatsValues(): StatsValues {
-  const latestDuration = runStartedAt !== 0 ? Date.now() - runStartedAt : lastDurationMs;
-  // Session total ticks live: completed runs plus the in-flight run, so it
-  // moves together with the current run and agent_end causes no jump.
-  const liveTotalMs = totalDurationMs + (runStartedAt !== 0 ? Date.now() - runStartedAt : 0);
-  const runSecs = Math.round((latestDuration ?? 0) / 1000);
-  const totalSecs = Math.round(liveTotalMs / 1000);
+  // All live durations snap to the wall-clock second grid (floor), so the
+  // run, total, and session values flip on the same render and tick in
+  // lockstep; monotonicNow keeps them immune to wall-clock steps.
+  // Completed runs keep their exact rounded durations.
+  const nowSec = Math.floor(monotonicNow() / 1000);
+  const runStarted = runStartedAt !== 0;
+  const runSecs = runStarted
+    ? nowSec - Math.floor(runStartedAt / 1000)
+    : Math.round((lastDurationMs ?? 0) / 1000);
+  const totalSecs = runStarted
+    ? Math.floor(totalDurationMs / 1000) + (nowSec - Math.floor(runStartedAt / 1000))
+    : Math.round(totalDurationMs / 1000);
+  const sessionSecs = sessionStartedAt > 0 ? nowSec - Math.floor(sessionStartedAt / 1000) : 0;
   const parts = (secs: number) => ({
-    hours: Math.floor(secs / 3600),
+    days: Math.floor(secs / 86400),
+    hours: Math.floor((secs % 86400) / 3600),
     minutes: Math.floor((secs % 3600) / 60),
     seconds: secs % 60,
   });
   const run = parts(runSecs);
   const total = parts(totalSecs);
+  const session = parts(sessionSecs);
   return {
     runTps: liveTps() ?? lastTps ?? 0,
     avgTps: sessionAvgTps() ?? 0,
     runTokens: runStartedAt !== 0 ? runTokens + messageTokens : lastRunTokens,
     totalTokens: totalOutputTokens,
-    runDuration: latestDuration !== undefined ? formatDuration(latestDuration) : "0s",
-    totalDuration: liveTotalMs > 0 ? formatDuration(liveTotalMs) : "0s",
+    runDuration: formatDuration(runSecs * 1000),
+    totalDuration: totalSecs > 0 ? formatDuration(totalSecs * 1000) : "0s",
+    sessionDuration: formatDuration(sessionSecs * 1000, true),
     runHours: run.hours,
     runMinutes: run.minutes,
     runSeconds: run.seconds,
     totalHours: total.hours,
     totalMinutes: total.minutes,
     totalSeconds: total.seconds,
+    sessionDays: session.days,
+    sessionHours: session.hours,
+    sessionMinutes: session.minutes,
+    sessionSeconds: session.seconds,
   };
 }
 
@@ -274,7 +353,7 @@ export default function (pi: ExtensionAPI) {
 
   // --- measure each agent run: agent_start -> agent_end ----------------------
   pi.on("agent_start", () => {
-    runStartedAt = Date.now();
+    runStartedAt = monotonicNow();
     runTokens = 0;
     messageTokens = 0;
   });
@@ -294,7 +373,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("agent_end", () => {
     if (runStartedAt === 0) return;
-    const elapsedMs = Date.now() - runStartedAt;
+    const elapsedMs = monotonicNow() - runStartedAt;
     const tokens = runTokens;
     runStartedAt = 0;
     runTokens = 0;
@@ -306,12 +385,7 @@ export default function (pi: ExtensionAPI) {
     totalOutputTokens += tokens;
     totalDurationMs += elapsedMs;
     persistTrackingState(pi);
-    requestRender?.();
   });
-
-  // Keep the footer fresh when the model/thinking level changes.
-  pi.on("model_select", () => requestRender?.());
-  pi.on("thinking_level_select", () => requestRender?.());
 
   // --- replace the footer with a replica of the built-in one + TPS ----------
   pi.on("session_start", (_event, ctx) => {
@@ -328,11 +402,15 @@ export default function (pi: ExtensionAPI) {
         },
       };
     });
+    startSessionTick();
   });
 
   pi.on("session_tree", (_event, ctx) => {
     restoreTrackingState(ctx.sessionManager.getBranch());
-    requestRender?.();
+  });
+
+  pi.on("session_shutdown", () => {
+    stopSessionTick();
   });
 }
 
